@@ -199,10 +199,10 @@ labels = Y_train, Y_test
 learning_rate = 0.01
 num_classes = 6
 EPOCHS = 100
-perform_validation = True
+perform_validation = True  # True if running model on test data
 batch_size_training = 32
 batch_size_test = X_test.shape[0]  # 0th dimension gives no. examples (we want to test entire test set)
-ema_decay = 0.8
+ema_decay = 0.8  # Decay rate for exponential moving average
 
 model = Model(data, labels, learning_rate=0.001, num_classes=num_classes, num_epochs=EPOCHS,
               perform_validation=perform_validation, batch_size_training=batch_size_training,
@@ -212,6 +212,8 @@ iterator = model.iterator
 
 start_time = time.time()
 
+
+# Keeps cost and epoch during training
 epoch_list = []
 cost_list = []
 
@@ -268,8 +270,7 @@ with tf.Session() as sess:
 elapsed_time = time.time() - start_time
 print("Minutes running: ", round(elapsed_time/60, 2))
 
-print(epoch_list)
-
+# Plot cost against epochs
 plt.plot(epoch_list, cost_list)
 plt.show()
 
