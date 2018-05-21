@@ -50,11 +50,11 @@ class Model:
 
     @staticmethod
     # Define convolutional layer
-    def conv_layer(input, channels_in, channels_out, filter_size):
+    def conv_layer(input, channels_in, channels_out, filter_size, stride_size):
         w_1 = tf.get_variable("weight_conv", [filter_size, filter_size, channels_in, channels_out],
                               initializer=tf.contrib.layers.xavier_initializer(seed=0))
         b_1 = tf.get_variable("bias_conv", [channels_out], initializer=tf.zeros_initializer())
-        conv = tf.nn.conv2d(input, w_1, strides=[1, 1, 1, 1], padding="SAME")
+        conv = tf.nn.conv2d(input, w_1, strides=[1, stride_size, stride_size, 1], padding="SAME")
         activation = tf.nn.relu(conv + b_1)
         activation_without_bias = tf.nn.relu(conv)
         return activation
@@ -78,7 +78,7 @@ class Model:
         # Shape of batch_mean/var = [num_channels], assuming input = [batch size, height, width, channel]
         batch_mean, batch_var = tf.nn.moments(input, axes=[0, 1, 2])
 
-        ema = tf.train.ExponentialMovingAverage(decay=0.8)
+        ema = tf.train.ExponentialMovingAverage(decay=ema_decay)
 
         def population_moving_average():
             ema_op = ema.apply([batch_mean, batch_var])
@@ -112,39 +112,24 @@ class Model:
     def prediction(self):
         # Define network
         with tf.variable_scope("conv1"):
-            Z1 = self.conv_layer(self.x, 3, 8, filter_size=4)
+            Z1 = self.conv_layer(self.x, 3, 8, filter_size=4, stride_size=1)
             Z1_batch_norm = self.conv_batch_norm(Z1, num_channels=8, phase=self.phase)
+            P1 = tf.nn.max_pool(Z1_batch_norm, ksize=[1, 8, 8, 1], strides=[1, 8, 8, 1],
+                                padding="VALID")  # For future reference, padding only works if strides are unit length
 
         with tf.variable_scope("conv2"):
-            Z2 = self.conv_layer(Z1_batch_norm, 8, 16, filter_size=4)
+            Z2 = self.conv_layer(P1, 8, 16, filter_size=2, stride_size=1)
             Z2_batch_norm = self.conv_batch_norm(Z2, num_channels=16, phase=self.phase)
             P2 = tf.nn.max_pool(Z2_batch_norm, ksize=[1, 4, 4, 1], strides=[1, 4, 4, 1],
                                 padding="VALID")  # For future reference, padding only works if strides are unit length
 
-        with tf.variable_scope("conv3"):
-            Z3 = self.conv_layer(P2, 16, 16, filter_size=4)
-            Z3_batch_norm = self.conv_batch_norm(Z3, num_channels=16, phase=self.phase)
-
-        with tf.variable_scope("conv4"):
-            Z4 = self.conv_layer(Z3_batch_norm, 16, 8, filter_size=4)
-            Z4_batch_norm = self.conv_batch_norm(Z4, num_channels=8, phase=self.phase)
-            P4 = tf.nn.max_pool(Z4_batch_norm, ksize=[1, 4, 4, 1], strides=[1, 4, 4, 1], padding="VALID")
-
-        with tf.variable_scope("conv5"):
-            Z5 = self.conv_layer(P4, 8, 8, filter_size=4)
-            Z5_batch_norm = self.conv_batch_norm(Z5, num_channels=8, phase=self.phase)
-
-        with tf.variable_scope("conv6"):
-            Z6 = self.conv_layer(Z5_batch_norm, 8, 128, filter_size=2)
-            Z6_batch_norm = self.conv_batch_norm(Z6, num_channels=128, phase=self.phase)
-            P6 = tf.nn.max_pool(Z6_batch_norm, ksize=[1, 4, 4, 1], strides=[1, 4, 4, 1], padding="VALID")
-
         with tf.name_scope("FC_layer1"):
-            flattened = tf.contrib.layers.flatten(P6)
+            flattened = tf.contrib.layers.flatten(P2)
 
             # No. input channels = W*H*Channels, note W*H hasn't changed from original due to use of "SAME" padding
-            Z7 = self.fc_layer(flattened, 1 * 1 * 128,self.num_classes)
-        return Z7
+            Z3 = self.fc_layer(flattened, 64, self.num_classes)
+
+        return Z3
 
     @lazy_property
     def cost(self):
@@ -215,8 +200,9 @@ learning_rate = 0.01
 num_classes = 6
 EPOCHS = 100
 perform_validation = True
-batch_size_training = 5
+batch_size_training = 32
 batch_size_test = X_test.shape[0]  # 0th dimension gives no. examples (we want to test entire test set)
+ema_decay = 0.8
 
 model = Model(data, labels, learning_rate=0.001, num_classes=num_classes, num_epochs=EPOCHS,
               perform_validation=perform_validation, batch_size_training=batch_size_training,
@@ -225,6 +211,9 @@ model = Model(data, labels, learning_rate=0.001, num_classes=num_classes, num_ep
 iterator = model.iterator
 
 start_time = time.time()
+
+epoch_list = []
+cost_list = []
 
 with tf.Session() as sess:
     # Initiliaze all the variables
@@ -246,16 +235,21 @@ with tf.Session() as sess:
 
         # Get updates on how training is going
         if epoch_num % 1 == 0:
+
             sess.run(iterator.initializer,
                      feed_dict={model.features_placeholder: model.X_train,
                                 model.labels_placeholder: model.Y_train,
-                                model.batch_size_placeholder: X_train.shape[0]})
+                                model.batch_size_placeholder: model.X_train.shape[0]})
             while True:
                 try:
                     print("Epoch number:", epoch_num, "\t", "Loss:", round(epoch_loss, 3), "\t" "Training accuracy:",
                           sess.run(model.compute_accuracy(model.y), feed_dict={model.phase: False}))
                 except tf.errors.OutOfRangeError:
                     break
+
+        if epoch_num % 5 == 0:
+            epoch_list.append(epoch_num)
+            cost_list.append(epoch_loss)
 
     # Run validation on test set
     if perform_validation is True:
@@ -270,5 +264,12 @@ with tf.Session() as sess:
             except tf.errors.OutOfRangeError:
                 break
 
+
 elapsed_time = time.time() - start_time
 print("Minutes running: ", round(elapsed_time/60, 2))
+
+print(epoch_list)
+
+plt.plot(epoch_list, cost_list)
+plt.show()
+
