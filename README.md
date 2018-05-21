@@ -2,7 +2,7 @@
 
 This repository contains a tensorflow model to perform image classification.
 
-The data used in this model can be summarised by the images below.
+The data used in this model can be summarised by the images below (1080 examples).
 
 ![alt text](https://github.com/Tsdevendra1/Image-Classification/blob/master/Images/SIGNS.png)
 
